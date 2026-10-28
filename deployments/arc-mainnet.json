@@ -1,0 +1,18 @@
+{
+  "_note": "Placeholder — run scripts/deploy-arc-mainnet.ts --confirm-mainnet to populate",
+  "chainId": 5042,
+  "network": "arc-mainnet",
+  "deployBlock": 0,
+  "deployer": "0x0000000000000000000000000000000000000000",
+  "owner": "0x0000000000000000000000000000000000000000",
+  "contracts": {
+    "ZKTranscriptLib":  { "name": "ZKTranscriptLib",  "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 },
+    "RelationsLib":     { "name": "RelationsLib",     "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 },
+    "WithdrawVerifier": { "name": "WithdrawVerifier", "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 },
+    "TransferVerifier": { "name": "TransferVerifier", "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 },
+    "PiiPool":          { "name": "PiiPool",          "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 },
+    "PiiKeyRegistry":   { "name": "PiiKeyRegistry",   "address": "0x0000000000000000000000000000000000000000", "txHash": "0x", "blockNumber": 0 }
+  },
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "explorer": "https://explorer.arc.io"
+}

@@ -33,6 +33,6 @@
     }
   },
   "include": ["src", "scripts", "sdk/src"],
-  "exclude": ["sdk/src/test", "sdk/src/prover.ts", "sdk/src/prover.worker.ts", "sdk/scripts", "node_modules"]
+  "exclude": ["scripts/compass-deploy.ts", "scripts/compass-deploy-helpers.ts", "sdk/src/test", "sdk/src/prover.ts", "sdk/src/prover.worker.ts", "sdk/scripts", "node_modules"]
 }
 
