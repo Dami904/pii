@@ -1,0 +1,46 @@
+{
+  "chainId": 5042002,
+  "network": "arc-testnet",
+  "deployBlock": 69004920,
+  "deployer": "0xE236BBA6F93182e53bAaa28489373ac913D516Fc",
+  "contracts": {
+    "ZKTranscriptLib": {
+      "name": "ZKTranscriptLib",
+      "address": "0x24d22d1576f9df6f1a87054fcae3d36beb9c2e80",
+      "txHash": "0xeacd8f2322c3e6d5485577dff1a41b0cd3e518222f3eedac30bfe46022e2cd8d",
+      "blockNumber": 69004920
+    },
+    "RelationsLib": {
+      "name": "RelationsLib",
+      "address": "0x13cfe5a8ae0836a03bb95c1f83a521c3a0123e63",
+      "txHash": "0x58d20b75b7aa4a232545d433a8acc0ab0ba2c95037d1815b509f8e8960613f56",
+      "blockNumber": 69004929
+    },
+    "WithdrawVerifier": {
+      "name": "WithdrawVerifier",
+      "address": "0xa412b824f53650a9b582bf685b7bfe31bf324721",
+      "txHash": "0x039edaa7974ad5a17e0e21e18813a8a1d6b6b99e26d372a9b8449ab6e6fe9fc4",
+      "blockNumber": 69004937
+    },
+    "TransferVerifier": {
+      "name": "TransferVerifier",
+      "address": "0x1b55cbe0de87cef666160762d42da1f3358de39e",
+      "txHash": "0x2a741f4fe010a73559ad5f9ec506ec2c1ae4db99e0d95a8f0acc69caf55b9600",
+      "blockNumber": 69004946
+    },
+    "PiiPool": {
+      "name": "PiiPool",
+      "address": "0x75bc90aa025caeedde588295d42b8f19a8e4bff3",
+      "txHash": "0x5471b9e5a8adeeb68fbfffd666f9a9d89bd239c7893d829f9bfc175b38cc0b03",
+      "blockNumber": 69004955
+    },
+    "PiiKeyRegistry": {
+      "name": "PiiKeyRegistry",
+      "address": "0x9e3a4256791edcba981d88e55d932a76b9cb8e29",
+      "txHash": "0xcb5eb514b3bd91b1913d3f193ce260c85f2a0c8264e2f7b5a275507498a5bde8",
+      "blockNumber": 69004963
+    }
+  },
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "explorer": "https://explorer.testnet.arc.io"
+}

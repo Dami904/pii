@@ -1,0 +1,8 @@
+{
+  "merkle_root": "0x13472a19e2dc732190c62f52534bfcde488c66bf373496666e0c935059651e67",
+  "nullifier": "0x0c1558f2018b1ddae1791272db1efea581a2a44c870630944d5398e97ff3a3df",
+  "recipient": "0x000000000000000000000000deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "amount": "700",
+  "change_commitment": "0x23395808ca083f367914774524f1f564f6c71d75b69702dce0038b758763948d",
+  "ext_data_hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+}

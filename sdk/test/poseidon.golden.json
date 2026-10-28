@@ -1,0 +1,17 @@
+{
+  "_comment": "Golden vectors generated from Noir (nargo 1.0.0-rc.5) using std::hash::poseidon2_permutation, t=4, rate=3, IV=n<<64. All values are 0x-prefixed hex BN254 field elements.",
+  "toolchain": {
+    "nargo": "1.0.0-rc.5",
+    "bb_js": "5.2.1",
+    "generated_by": "Stage 0 — pii_stdlib_test nargo test --show-output"
+  },
+  "vectors": {
+    "hash2_1_2":           "0x038682aa1cb5ae4e0a3f13da432a95c77c5c111f6f030faf9cad641ce1ed7383",
+    "hash2_0_0":           "0x0b63a53787021a4a962a452c2921b3663aff1ffd8d5510540f8e659e782956f1",
+    "hash3_1_2_3":         "0x23864adb160dddf590f1d3303683ebcb914f828e2635f6e85a32f0a1aecd3dd8",
+    "hash4_1_2_3_4":       "0x130bf204a32cac1f0ace56c78b731aa3809f06df2731ebcf6b3464a15788b1b9",
+    "hash8_1_to_8":        "0x01dec21c6e1b30609eda618d7e35e5d9d6152f8fa67320d939c1a89603647142",
+    "zeros_1":             "0x04cb564ccfbd1da4c8c4d2638607fe10b26f8bb8b5bad7f6e72c11fc0744886d",
+    "empty_tree_root_d20": "0x19ee29beb37701dd87b245c58cc348522c86f063f3aa049d19d6fddc71de23c7"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "lib/poseidon2-evm": {
+    "tag": {
+      "name": "v2.0.0",
+      "rev": "30c69861b6bf2cb1a93583e05a4713c275f1bc28"
+    }
+  }
+}

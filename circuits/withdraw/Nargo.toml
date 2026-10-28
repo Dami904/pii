@@ -1,0 +1,8 @@
+[package]
+name = "withdraw"
+type = "bin"
+authors = ["Pii"]
+compiler_version = ">=0.38.0"
+
+[dependencies]
+pii_lib = { path = "../pii_lib" }

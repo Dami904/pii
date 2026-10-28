@@ -1,0 +1,7 @@
+[package]
+name = "pii_lib"
+type = "lib"
+authors = ["Pii"]
+compiler_version = ">=0.38.0"
+
+[dependencies]

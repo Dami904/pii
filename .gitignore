@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+node_modules/
+contracts/out/
+contracts/cache/
+.circle/
+deployments/arc-mainnet.json
+*.local
+
+# generated artifacts (regenerate with scripts/prove.sh)
+circuits/*/target/*.gz
+contracts/test/fixtures/*.bin
+console.jsonl
+dist/
+.arc-studio/
