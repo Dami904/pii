@@ -5,7 +5,7 @@
 
 import { encryptMemo, dummyMemo }             from '@sdk/memo'
 import { buildTransferInputs, buildWithdrawInputs } from '@sdk/inputs'
-import { depositSecret }                       from '@sdk/note'
+import { depositSecret, randomBlinding }       from '@sdk/note'
 import type { Note }                           from '@sdk/note'
 import type { MerkleTree, SyncResult }         from '@sdk/tree'
 import type { TransferRelayParams, WithdrawRelayParams } from '@sdk/relayer'
@@ -57,8 +57,9 @@ export type WaitForReceiptFn = (hash: Hex) => Promise<void>
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
+// Blindings hide note commitments, so they must come from a CSPRNG.
 function randBlinding(): bigint {
-  return BigInt(Date.now()) * 1_000_003n + BigInt(Math.floor(Math.random() * 1e9))
+  return randomBlinding()
 }
 
 function hex64(n: bigint): `0x${string}` {
@@ -117,6 +118,8 @@ export async function depositFeeNote(
 export async function ensureFeeNotes(opts: {
   notes:         Note[]
   inNote:        Note
+  /** Second input note, when the payment combines two. */
+  inNote2?:      Note
   minFee:        bigint
   needed:        number
   ownerKey:      bigint
@@ -126,19 +129,24 @@ export async function ensureFeeNotes(opts: {
   waitReceipt:   WaitForReceiptFn
   readAllowance: (owner: Hex, spender: Hex) => Promise<bigint>
   onProgress?:   (deposited: number, total: number) => void
+  /** Called with the deposit tx hash after each fee note lands, so callers can record it. */
+  onDeposited?:  (txHash: Hex) => void
 }): Promise<number> {
   const {
-    notes, inNote, minFee, needed,
-    ownerKey, viewKeys, userAddress, write, waitReceipt, readAllowance, onProgress,
+    notes, inNote, inNote2, minFee, needed,
+    ownerKey, viewKeys, userAddress, write, waitReceipt, readAllowance, onProgress, onDeposited,
   } = opts
 
-  const eligible = notes.filter(n => n.leafIndex !== inNote.leafIndex && n.amount >= minFee)
+  const eligible = notes.filter(
+    n => n.leafIndex !== inNote.leafIndex && n.leafIndex !== inNote2?.leafIndex && n.amount >= minFee,
+  )
   const missing  = needed - eligible.length
   if (missing <= 0) return 0
 
   for (let i = 0; i < missing; i++) {
     onProgress?.(i, missing)
-    await depositFeeNote(ownerKey, viewKeys, userAddress, write, waitReceipt, readAllowance)
+    const tx = await depositFeeNote(ownerKey, viewKeys, userAddress, write, waitReceipt, readAllowance)
+    onDeposited?.(tx)
   }
   onProgress?.(missing, missing)
   return missing
@@ -155,7 +163,10 @@ export function prepareTransfer(opts: {
   sk:               bigint
   encPub:           Uint8Array
   inNote:           Note
-  feeNote:          Note      // required: must be a distinct note
+  /** Optional second input: the circuit can spend two notes in one payment. */
+  inNote2?:         Note
+  /** Distinct note that pays the relayer fee. Omit it when `fee` is 0: no fee note is spent. */
+  feeNote?:         Note
   tree:             MerkleTree
   sendAmount:       bigint
   fee:              bigint
@@ -166,7 +177,7 @@ export function prepareTransfer(opts: {
   chainId:          bigint
 }): TransferPrep {
   const {
-    sk, encPub, inNote, feeNote, tree,
+    sk, encPub, inNote, inNote2, feeNote, tree,
     sendAmount, fee, relayerAddr, relayerOwnerKey,
     recipientOwnerKey, recipientEncPub, chainId,
   } = opts
@@ -176,15 +187,21 @@ export function prepareTransfer(opts: {
   const changeBlinding    = randBlinding()
   const feeOutBlinding    = randBlinding()
   const feeChangeBlinding = randBlinding()
+  // The unused 2nd input is a zero-value phantom note whose nullifier is still revealed
+  // on-chain. It must differ every time, or a wallet can make only one payment ever.
+  const phantomBlinding   = randBlinding()
 
-  const change    = inNote.amount - sendAmount
-  const feeChange = feeNote.amount - fee
+  const change    = inNote.amount + (inNote2?.amount ?? 0n) - sendAmount
+  const feeChange = feeNote ? feeNote.amount - fee : 0n
 
   const memoRecipient = encryptMemo(recipientEncPub, { assetId, amount: sendAmount, blinding: recipientBlinding })
   const memoChange    = change > 0n
     ? encryptMemo(encPub, { assetId, amount: change,     blinding: changeBlinding })
     : dummyMemo()
-  const memoFeeOut    = encryptMemo(encPub, { assetId, amount: fee,       blinding: feeOutBlinding })
+  // With a fee of 0 the fee output is empty (the pool skips it), so its memo is a dummy.
+  const memoFeeOut    = fee > 0n
+    ? encryptMemo(encPub, { assetId, amount: fee,       blinding: feeOutBlinding })
+    : dummyMemo()
   const memoFeeChange = feeChange > 0n
     ? encryptMemo(encPub, { assetId, amount: feeChange,  blinding: feeChangeBlinding })
     : dummyMemo()
@@ -195,9 +212,11 @@ export function prepareTransfer(opts: {
 
   const { inputs, publicInputs } = buildTransferInputs({
     sk,
-    inNotes:          [inNote],
+    inNotes:          inNote2 ? [inNote, inNote2] : [inNote],
     feeNote,
-    leafIndices:      [inNote.leafIndex!, feeNote.leafIndex!],
+    leafIndices:      inNote2
+      ? [inNote.leafIndex!, inNote2.leafIndex!, ...(feeNote ? [feeNote.leafIndex!] : [])]
+      : [inNote.leafIndex!, ...(feeNote ? [feeNote.leafIndex!] : [])],
     tree,
     recipientOwnerKey,
     sendAmount,
@@ -207,7 +226,9 @@ export function prepareTransfer(opts: {
     memos,
     pool:             POOL_ADDRESS,
     chainId,
-    blindings: { recipientBlinding, changeBlinding, feeOutBlinding, feeChangeBlinding },
+    // Unused input slots are zero-value phantoms whose nullifiers are still revealed on-chain:
+    // they must be different every time (see phantomBlinding above), the fee slot included.
+    blindings: { recipientBlinding, changeBlinding, feeOutBlinding, feeChangeBlinding, phantomBlinding, feeInBlinding: randBlinding() },
   })
 
   const relayParams: TransferRelayParams = {
@@ -243,6 +264,8 @@ export function prepareTransfer(opts: {
  */
 export function prepareWithdraw(opts: {
   sk:            bigint
+  /** The withdrawer's own viewing public key: the change note is encrypted to it. */
+  encPub:        Uint8Array
   note:          Note
   tree:          MerkleTree | SyncResult
   amount:        bigint
@@ -251,13 +274,18 @@ export function prepareWithdraw(opts: {
   recipient:     Hex
   chainId:       bigint
 }): WithdrawPrep {
-  const { sk, note, tree, amount, fee, relayerAddr, recipient, chainId } = opts
+  const { sk, encPub, note, tree, amount, fee, relayerAddr, recipient, chainId } = opts
 
   // Accept SyncResult or bare MerkleTree
   const merkleTree = 'tree' in tree ? tree.tree : tree
 
+  // Notes are found only by decrypting their memo, so a partial withdrawal's change
+  // must carry a real memo to the owner. A dummy is only safe when there is no change.
   const changeBlinding = randBlinding()
-  const changeMemo     = dummyMemo()
+  const change         = note.amount - amount
+  const changeMemo     = change > 0n
+    ? encryptMemo(encPub, { assetId: note.assetId, amount: change, blinding: changeBlinding })
+    : dummyMemo()
 
   const { inputs, publicInputs } = buildWithdrawInputs({
     sk,

@@ -7,29 +7,28 @@
 import { useState, useRef, useEffect }           from 'react'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { toast }                                  from 'sonner'
-import { Upload, Play, AlertCircle, Check, X, Info } from 'lucide-react'
+import { Upload, Download, Play, AlertCircle, Check, X, Info } from 'lucide-react'
 import { usePii }                                 from '../contexts/PiiContext.js'
-import { decodePiiAddress }                       from '@sdk/memo'
-import { relayTransfer, getRelayerInfo }          from '@sdk/relayer'
-import { syncTree }                               from '@sdk/tree'
+import { decodePiiAddress, encodePiiAddress }    from '@sdk/memo'
+import { relayTransfer, getRelayerInfo, type RelayerInfo } from '@sdk/relayer'
+import { relayerCapacity }                        from '../lib/relayer-gas.js'
+import { syncPool }         from '../lib/sync.js'
 import { recoverWallet }                          from '@sdk/wallet'
 import { prove }                                  from '../lib/worker-bridge.js'
-import { prepareTransfer, ensureFeeNotes, FEE_NOTE_AMOUNT } from '../lib/pii-ops.js'
+import { addActivity }                            from '../lib/activity.js'
+import { planPayment }                            from '../lib/pay-plan.js'
+import { NETWORK }                                from '../lib/network.js'
+import { parseCSV, buildSampleCsv, type CsvRow }   from '../lib/payroll-csv.js'
+import { sendInParts }                            from '../lib/pay-parts.js'
+import { ensureFeeNotes, FEE_NOTE_AMOUNT } from '../lib/pii-ops.js'
 import {
-  POOL_ADDRESS, DEPLOY_BLOCK, RELAY_BASE, makePoolContractLike,
-  formatUsdc, parseUsdc, makePoolLike,
-  USDC_ADDRESS, USDC_ABI,
+  RELAY_BASE, 
+  formatUsdc, makePoolLike,
+  USDC_ADDRESS, USDC_ABI, CHAIN_ID,
 } from '../lib/pii.js'
-import type { PublicClientLike } from '@sdk/tree'
+import type { SyncResult } from '@sdk/tree'
 import type { Note } from '@sdk/note'
 import type { Hex } from 'viem'
-
-interface CsvRow {
-  piiAddress: string
-  amount:     bigint
-  rawAmount:  string
-  error?:     string
-}
 
 type RowStatus = 'pending' | 'running' | 'done' | 'failed'
 
@@ -46,7 +45,7 @@ export default function PayrollTab() {
   const { address }                        = useAccount()
   const pub                                = usePublicClient()
   const { writeContractAsync }             = useWriteContract()
-  const { keys, viewKeys, wallet, setWallet } = usePii()
+  const { keys, viewKeys, wallet, setWallet, startTask } = usePii()
   const fileRef                            = useRef<HTMLInputElement>(null)
 
   const [rows, setRows]                = useState<RowState[]>([])
@@ -55,13 +54,20 @@ export default function PayrollTab() {
   const [relayerAddr, setRelayerAddr]  = useState<Hex | null>(null)
   const [relayerOK, setRelayerOK]      = useState<bigint | null>(null)
   const [feeStatus, setFeeStatus]      = useState<string | null>(null)
+  const [relayerInfo, setRelayerInfo] = useState<RelayerInfo | null>(null)
 
   useEffect(() => {
     void getRelayerInfo(RELAY_BASE).then(info => {
       setRelayerAddr(info.relayerAddress)
       setRelayerOK(BigInt(info.relayerOwnerKey))
+      setRelayerInfo(info)
     }).catch(() => {})
   }, [])
+
+  // A relayer minimum fee of 0 means payments take no fee and need no fee note.
+  const noFee    = relayerInfo !== null && BigInt(relayerInfo.minFee) === 0n
+  const feeAtoms = noFee ? 0n : RELAYER_FEE
+  const capacity = relayerCapacity(relayerInfo, noFee)
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -69,16 +75,19 @@ export default function PayrollTab() {
     const reader = new FileReader()
     reader.onload = (ev) => {
       const text = (ev.target?.result as string) ?? ''
-      setRows(parseCSV(text).map(r => ({ row: r, status: 'pending' })))
+      setRows(parseCSV(text, NETWORK).map(r => ({ row: r, status: 'pending' })))
       setResumeIdx(0)
     }
     reader.readAsText(f)
   }
 
-  async function resync(): Promise<Note[]> {
-    if (!pub || !keys || !viewKeys) return wallet?.notes ?? []
-    const pcl   = pub as unknown as PublicClientLike
-    const sr    = await syncTree(pcl, makePoolContractLike(pub), POOL_ADDRESS, DEPLOY_BLOCK)
+  /**
+   * Resync and update wallet state. Returns the fresh tree too: setWallet does not
+   * update `wallet` inside the running payroll loop, so each row must prove against `sr`.
+   */
+  async function resync(minLeaves = 0): Promise<{ notes: Note[]; sr: SyncResult } | null> {
+    if (!pub || !keys || !viewKeys) return null
+    const sr    = await syncPool(pub, minLeaves)
     const pool  = makePoolLike(pub)
     const store = await recoverWallet(
       keys.sk,
@@ -88,33 +97,57 @@ export default function PayrollTab() {
     )
     const notes = store.unspent()
     setWallet({ syncResult: sr, notes, totalBalance: notes.reduce((a, n) => a + n.amount, 0n) })
-    return notes
+    return { notes, sr }
   }
 
+  /** A starter file whose example rows use the user's own Pii address, so it works as a test. */
+  function downloadSample() {
+    if (!keys || !viewKeys) return
+    const csv = buildSampleCsv(encodePiiAddress(keys.ownerKey, viewKeys.encPub, NETWORK))
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'pii-payroll-sample.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /** Locks tab navigation while this runs, so a payment cannot be started twice or orphaned. */
   async function runPayroll() {
+    const end = startTask('Payroll')
+    try { await payrollInner() } finally { end() }
+  }
+
+  async function payrollInner() {
     if (!keys || !viewKeys || !wallet || !address) { toast.error('Unlock wallet first'); return }
     if (!relayerAddr || relayerOK === null) { toast.error('Relayer unavailable'); return }
     const validRows = rows.filter(r => !r.row.error && r.status !== 'done')
     if (validRows.length === 0) return
+    // Refuse up front if the relayer cannot cover every row, instead of dying half-way.
+    if (capacity && capacity.transfersLeft < validRows.length) {
+      toast.error(`The relayer is low on gas: about ${capacity.transfersLeft} payments left, this payroll needs ${validRows.length}. Please try again later.`)
+      return
+    }
     setRunning(true)
 
-    // ── Pre-flight: ensure enough fee notes ──────────────────────────────────
-    let currentNotes = wallet.notes
-    const sorted0    = [...currentNotes].sort((a, b) => (b.amount > a.amount ? 1 : -1))
-    const inNote0    = sorted0[0]
+    // Start (or resume) from a fresh sync, never from possibly stale wallet state.
+    const start = await resync().catch(() => null)
+    if (!start) { toast.error('Sync failed. Try again.'); setRunning(false); return }
+    let currentNotes = start.notes
+    let currentSR    = start.sr
 
-    const needed = validRows.length
-    setFeeStatus(`Checking fee notes (need ${needed})…`)
-
-    try {
+    // A fee note is a note other than the ones a row spends. Deposit one if none is left.
+    // One is enough: each row returns its fee change as a new note, which pays the next fee.
+    async function topUpFee(inputs: Note[], notes: Note[], sr: SyncResult): Promise<{ notes: Note[]; sr: SyncResult }> {
       const deposited = await ensureFeeNotes({
-        notes:       currentNotes,
-        inNote:      inNote0,
+        notes,
+        inNote:      inputs[0],
+        inNote2:     inputs[1],
         minFee:      RELAYER_FEE,
-        needed,
-        ownerKey:    keys.ownerKey,
-        viewKeys,
-        userAddress: address,
+        needed:      1,
+        ownerKey:    keys!.ownerKey,
+        viewKeys:    viewKeys!,
+        userAddress: address!,
         write: async (args) => {
           const hash = await writeContractAsync(args as Parameters<typeof writeContractAsync>[0])
           return hash
@@ -123,10 +156,24 @@ export default function PayrollTab() {
         readAllowance: (owner, spender) =>
           pub!.readContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'allowance', args: [owner, spender] }),
         onProgress: (done, total) => setFeeStatus(`Topping up fee notes: ${done}/${total}…`),
+        onDeposited: (txHash) => addActivity(keys!.ownerKey, { kind: 'feenote', amount: FEE_NOTE_AMOUNT, txHash }),
       })
-      if (deposited > 0) {
-        setFeeStatus(`Deposited ${deposited} fee note(s). Syncing…`)
-        currentNotes = await resync()
+      if (deposited === 0) return { notes, sr }
+      setFeeStatus(`Deposited ${deposited} fee note(s). Syncing…`)
+      const fresh = await resync(sr.leaves.length + deposited)
+      if (!fresh) throw new Error('Sync failed after fee deposit')
+      return { notes: fresh.notes, sr: fresh.sr }
+    }
+
+    // Pre-flight for the biggest row, so the fee-note deposit is one wallet pop-up up front.
+    setFeeStatus('Checking fee note…')
+    try {
+      const maxAmount = validRows.reduce((m, r) => (r.row.amount > m ? r.row.amount : m), 0n)
+      const p0 = planPayment(currentNotes, maxAmount, feeAtoms, formatUsdc)
+      if (!('error' in p0) && p0.needsFeeNote && !p0.feeNote) {
+        const topped = await topUpFee(p0.inputs, currentNotes, currentSR)
+        currentNotes = topped.notes
+        currentSR    = topped.sr
       }
     } catch (e: unknown) {
       toast.error(`Fee note setup failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -142,55 +189,64 @@ export default function PayrollTab() {
       if (row.error || rows[i].status === 'done') continue
 
       setRows(prev => prev.map((r, j) => j === i ? { ...r, status: 'running' } : r))
+      let lastTx: string | undefined
 
-      try {
-        const sortedNow = [...currentNotes].sort((a, b) => (b.amount > a.amount ? 1 : -1))
-        const inNote    = sortedNow[0]
-        if (!inNote || inNote.amount < row.amount) {
-          throw new Error(`Insufficient balance for row ${i + 1}`)
-        }
-        const feeNote = sortedNow.find(
-          n => n.leafIndex !== inNote.leafIndex && n.amount >= RELAYER_FEE
-        )
-        if (!feeNote) throw new Error(`No fee note available for row ${i + 1}`)
+      const recipient = decodePiiAddress(row.piiAddress)
 
-        const recipient = decodePiiAddress(row.piiAddress)
+      // A row is one payment, or several when no two notes cover it. Each is sent in turn.
+      const result = await sendInParts({
+        sk:              keys.sk,
+        encPub:          viewKeys.encPub,
+        recipient,
+        relayerAddr,
+        relayerOwnerKey: relayerOK,
+        fee:             feeAtoms,
+        chainId:         BigInt(CHAIN_ID),
+        fmt:             formatUsdc,
+        prove:           async (inputs, onStage) => (await prove('transfer', inputs, onStage)).proof,
+        relay:           (params) => relayTransfer(RELAY_BASE, params),
+        topUpFee: async (inputs, notes, sr) => {
+          const topped = await topUpFee(inputs, notes, sr)
+          setFeeStatus(null)
+          return topped
+        },
+        resync,
+        onConfirmed: ({ amount: part, txHash }) => {
+          addActivity(keys.ownerKey, { kind: 'payroll', amount: part, counterparty: row.piiAddress, txHash })
+          lastTx = txHash
+        },
+      }, row.amount, currentNotes, currentSR)
 
-        const prep = prepareTransfer({
-          sk:               keys.sk,
-          encPub:           viewKeys.encPub,
-          inNote,
-          feeNote,
-          tree:             wallet.syncResult.tree,
-          sendAmount:       row.amount,
-          fee:              RELAYER_FEE,
-          relayerAddr,
-          relayerOwnerKey:  relayerOK,
-          recipientOwnerKey: recipient.ownerKey,
-          recipientEncPub:   recipient.encPub,
-          chainId:           BigInt(pub?.chain?.id ?? 5042002),
-        })
+      currentNotes = result.notes
+      currentSR    = result.sr
 
-        const { proof } = await prove('transfer', prep.inputs, () => {})
-        prep.relayParams.proof = `0x${Buffer.from(proof).toString('hex')}`
-
-        const result = await relayTransfer(RELAY_BASE, prep.relayParams)
-        const txHash = result.status === 'confirmed' ? result.txHash : undefined
+      if (result.error || result.unconfirmed || result.sent < row.amount) {
+        const left = row.amount - result.sent
+        const msg = result.error
+          ?? 'Not confirmed yet. Check Portfolio and Activity before retrying this row.'
+        // If part of the row went out, keep only the remainder so Resume cannot pay it twice.
         setRows(prev => prev.map((r, j) =>
-          j === i ? { ...r, status: 'done', txHash: txHash ? String(txHash) : undefined } : r
-        ))
-        setResumeIdx(i + 1)
-
-        // Re-sync before next row (change note returns, fee note is spent)
-        currentNotes = await resync()
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e)
-        setRows(prev => prev.map((r, j) =>
-          j === i ? { ...r, status: 'failed', error: msg } : r
+          j === i
+            ? {
+                ...r,
+                status: 'failed',
+                error: result.sent > 0n ? `${formatUsdc(result.sent)} already sent; ${formatUsdc(left)} remaining. ${msg}` : msg,
+                row: result.sent > 0n ? { ...r.row, amount: left, rawAmount: formatUsdc(left) } : r.row,
+              }
+            : r
         ))
         setResumeIdx(i)
         setRunning(false)
         toast.error(`Row ${i + 1} failed: ${msg}`)
+        return
+      }
+
+      setRows(prev => prev.map((r, j) => j === i ? { ...r, status: 'done', txHash: lastTx } : r))
+      setResumeIdx(i + 1)
+
+      if (result.syncFailed) {
+        setRunning(false)
+        toast.error(`Row ${i + 1} was paid, but syncing failed. Press Resume to continue.`)
         return
       }
     }
@@ -201,6 +257,7 @@ export default function PayrollTab() {
   const validRowCount = rows.filter(r => !r.row.error).length
   const total         = rows.reduce((a, r) => a + (r.row.error ? 0n : r.row.amount), 0n)
   const hasErrors     = rows.some(r => r.row.error)
+  const legacyRows    = rows.filter(r => r.row.legacy && !r.row.error).length
   const pending       = rows.filter(r => r.status === 'pending').length
 
   return (
@@ -216,14 +273,30 @@ export default function PayrollTab() {
         </p>
       </div>
 
-      <div className="rounded-2xl bg-[var(--surface-strong)] border border-[var(--border)]
-                      backdrop-blur-sm p-5 flex flex-col gap-4">
+      <div className="pii-card p-5 flex flex-col gap-4">
         <p className="text-xs font-semibold tracking-widest text-[var(--subtle)] uppercase">
           Payroll
         </p>
-        <p className="text-xs text-[var(--muted)]">
-          Upload a CSV with columns: <span className="font-mono">pii_address, amount</span>
-        </p>
+        <div className="flex flex-col gap-2 text-xs text-[var(--muted)]">
+          <p>
+            One payment per line: <span className="font-mono">pii_address,amount</span> in USDC.
+            Each person copies their Pii address from their Portfolio.
+          </p>
+          <pre className="font-mono text-[10px] leading-relaxed rounded-lg bg-[var(--surface-muted)]
+                          border border-[var(--border)] px-3 py-2 overflow-x-auto">{`pii_address,amount
+pii:27f6fc54…,25.00
+pii:9ab13e07…,12.50`}</pre>
+          <button
+            type="button"
+            onClick={downloadSample}
+            disabled={!keys}
+            className="self-start inline-flex items-center gap-1.5 text-[var(--accent-hover)]
+                       font-semibold hover:underline disabled:opacity-50"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download a sample CSV
+          </button>
+        </div>
 
         <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
         <button
@@ -243,12 +316,25 @@ export default function PayrollTab() {
                 {validRowCount} valid rows
                 {validRowCount > 0 && (
                   <span className="ml-1 text-[var(--subtle)]">
-                    · needs {validRowCount} fee note{validRowCount !== 1 ? 's' : ''} ({formatUsdc(FEE_NOTE_AMOUNT * BigInt(validRowCount))} USDC)
+                    {noFee ? '· no fee note needed' : `· needs 1 fee note (${formatUsdc(FEE_NOTE_AMOUNT)} USDC), reused across rows`}
                   </span>
                 )}
               </span>
               <span className="font-semibold tabular-nums">{formatUsdc(total)} USDC total</span>
             </div>
+            {validRowCount > 0 && (
+              <p className={`text-[11px] ${capacity && capacity.transfersLeft < validRowCount ? 'text-[var(--danger)]' : 'text-[var(--subtle)]'}`}>
+                About {validRowCount} {validRowCount === 1 ? 'minute' : 'minutes'}, one proof per row.
+                {capacity && ` Relayer gas about ${(validRowCount * capacity.transferCostUsdc).toFixed(2)} USDC; it can cover about ${capacity.transfersLeft} payments now.`}
+              </p>
+            )}
+
+            {legacyRows > 0 && (
+              <p className="text-[11px] text-amber-700">
+                {legacyRows} {legacyRows === 1 ? 'row uses' : 'rows use'} an old-format address with no network marker.
+                Make sure {legacyRows === 1 ? 'it was' : 'they were'} copied from the {NETWORK} site.
+              </p>
+            )}
 
             {hasErrors && (
               <div className="flex items-center gap-2 text-xs text-[var(--danger)]">
@@ -307,19 +393,4 @@ function StatusIcon({ status, errorMsg }: { status: RowStatus; errorMsg?: string
   if (status === 'running') return <div className="w-3.5 h-3.5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin flex-shrink-0" />
   if (errorMsg)             return <AlertCircle className="w-3.5 h-3.5 text-[var(--danger)] flex-shrink-0" />
   return <div className="w-3.5 h-3.5 rounded-full border border-[var(--border)] flex-shrink-0" />
-}
-
-function parseCSV(text: string): CsvRow[] {
-  return text.split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('pii_address') && !l.startsWith('#'))
-    .map(l => {
-      const [addr, amt] = l.split(',').map(s => s.trim())
-      if (!addr || !amt) return { piiAddress: l, amount: 0n, rawAmount: '', error: 'Bad row' }
-      try { decodePiiAddress(addr) }
-      catch { return { piiAddress: addr, amount: 0n, rawAmount: amt, error: 'Invalid pii address' } }
-      const amount = parseUsdc(amt)
-      if (amount <= 0n) return { piiAddress: addr, amount: 0n, rawAmount: amt, error: 'Invalid amount' }
-      return { piiAddress: addr, amount, rawAmount: amt }
-    })
 }

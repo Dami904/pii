@@ -39,3 +39,61 @@ body {
 
 /* Toaster sits above modals */
 [data-sonner-toaster] { z-index: 9000 !important; }
+
+/* ── Pii components ─────────────────────────────────────────────────────────── */
+.pii-card {
+  background: #ffffff;
+  border: 1.5px solid var(--accent);
+  border-radius: 1.5rem;
+  box-shadow: 4px 5px 0 var(--accent);
+}
+.pii-field {
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 1rem;
+}
+.pii-chip {
+  height: 2rem;
+  padding: 0 0.9rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-strong);
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.pii-chip:hover { background: var(--surface-muted); }
+
+/* The screens' column: phone width on small screens, the whole card on laptops. */
+.app-col { max-width: 28rem; }
+
+/* ── App frame (laptop screens): a rounded card with a hard offset shadow ──────── */
+@media (min-width: 1024px) {
+  .app-col { max-width: none; }
+  .app-stage {
+    justify-content: center;
+    padding: 32px 0;
+    background: radial-gradient(circle at 50% 0%, #ffffff 0%, #eef2f7 70%) !important;
+  }
+  .app-frame {
+    position: relative;
+    flex: none;
+    /* About a third of the screen: 640px on 1920, never narrower than a phone. */
+    width: clamp(400px, 33.333vw, 720px);
+    height: min(820px, calc(100dvh - 64px));
+    border: 1.5px solid var(--accent);
+    border-radius: 36px;
+    box-shadow: 6px 8px 0 var(--accent);
+    overflow: hidden;
+    background: var(--bg-gradient);
+    /* A transform makes position:fixed children (the bottom nav) stay inside the frame. */
+    transform: translateZ(0);
+  }
+  .app-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .app-scroll::-webkit-scrollbar { display: none; }
+}

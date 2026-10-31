@@ -90,7 +90,9 @@ export async function validateWithdraw(
       account: account.address,
     });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // viem's shortMessage omits the echoed request args
+    const msg = (e as { shortMessage?: string }).shortMessage
+      ?? (e instanceof Error ? e.message : String(e));
     return err(422, `simulation failed: ${msg}`);
   }
 
@@ -180,7 +182,9 @@ export async function validateTransfer(
       account: account.address,
     });
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // viem's shortMessage omits the echoed request args
+    const msg = (e as { shortMessage?: string }).shortMessage
+      ?? (e instanceof Error ? e.message : String(e));
     return err(422, `simulation failed: ${msg}`);
   }
 

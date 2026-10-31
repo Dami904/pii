@@ -58,7 +58,7 @@ export {
   scanNotes,
   MEMO_BYTE_LENGTH,
 } from "./memo.js";
-export type { ViewingKeys, MemoPayload, LeafWithMemo } from "./memo.js";
+export type { ViewingKeys, MemoPayload, LeafWithMemo, PiiNetwork } from "./memo.js";
 export {
   getRelayerInfo,
   relayWithdraw,

@@ -1,0 +1,4 @@
+.env*
+.vercel
+.arc-studio
+console.jsonl

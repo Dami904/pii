@@ -157,10 +157,10 @@ async function main() {
     args: [deployerAcc.address],
   });
   console.log(`Deployer USDC balance: ${Number(bal) / 1e6} USDC`);
-  // 6 deploys × estimated gas; require ≥ 5 USDC to be safe
-  if (bal < 5_000_000n) {
+  // 6 deploys × estimated gas; require ≥ 0.7 USDC (full deploy costs ~0.4 USDC)
+  if (bal < 700_000n) {
     throw new Error(
-      `Insufficient balance. Deployer ${deployerAcc.address} needs ≥ 5 USDC on Arc Mainnet.\n` +
+      `Insufficient balance. Deployer ${deployerAcc.address} needs ≥ 0.7 USDC on Arc Mainnet.\n` +
       `Current balance: ${Number(bal) / 1e6} USDC.`
     );
   }

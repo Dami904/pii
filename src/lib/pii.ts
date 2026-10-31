@@ -46,9 +46,10 @@ export const POOL_ABI = [
     inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'maxPoolBalance',   type: 'function', stateMutability: 'view',
     inputs: [], outputs: [{ type: 'uint256' }] },
-  { name: 'currentPoolBalance', type: 'function', stateMutability: 'view',
-    inputs: [], outputs: [{ type: 'uint256' }] },
   { name: 'nullifierSpent',   type: 'function', stateMutability: 'view',
+    inputs: [{ name: '', type: 'uint256' }], outputs: [{ type: 'bool' }] },
+  // Public mapping on PiiMerkle; syncTree refuses any root the pool does not know.
+  { name: 'isKnownRoot',      type: 'function', stateMutability: 'view',
     inputs: [{ name: '', type: 'uint256' }], outputs: [{ type: 'bool' }] },
   { name: 'NewCommitment',    type: 'event',
     inputs: [
@@ -58,32 +59,38 @@ export const POOL_ABI = [
     ] },
 ] as const
 
+// Matches contracts/src/PiiKeyRegistry.sol
 export const REGISTRY_ABI = [
   { name: 'register', type: 'function', stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'ownerKey', type: 'uint256' },
-      { name: 'encPub',   type: 'bytes'   },
-    ], outputs: [] },
-  { name: 'encPubOf', type: 'function', stateMutability: 'view',
-    inputs: [{ name: 'ownerKey', type: 'uint256' }], outputs: [{ type: 'bytes' }] },
+    inputs: [{ name: 'encPub', type: 'bytes' }], outputs: [] },
+  { name: 'getKey', type: 'function', stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }], outputs: [{ type: 'bytes' }] },
   { name: 'KeyRegistered', type: 'event',
     inputs: [
-      { name: 'ownerKey', type: 'uint256', indexed: true  },
-      { name: 'encPub',   type: 'bytes',   indexed: false },
+      { name: 'owner',  type: 'address', indexed: true  },
+      { name: 'encPub', type: 'bytes',   indexed: false },
     ] },
 ] as const
 
-/** Format a USDC atom amount to a 2-decimal string (e.g. 1500000 → "1.50") */
+/** Format USDC atoms: min 2 decimals, up to 6 (e.g. 1500000 → "1.50", 1000 → "0.001") */
 export function formatUsdc(atoms: bigint): string {
   const s = atoms.toString().padStart(7, '0')
-  return `${s.slice(0, -6) || '0'}.${s.slice(-6, -4)}`
+  // At least 2 decimals, up to 6 when needed: 1500000 -> "1.50", 1000 -> "0.001"
+  const frac = s.slice(-6).replace(/0+$/, '').padEnd(2, '0')
+  return `${s.slice(0, -6)}.${frac}`
 }
 
 /** Parse a decimal USDC string to atoms (e.g. "1.50" → 1500000n) */
+/**
+ * Parse a USDC string to atoms. Returns 0n for anything that is not a plain
+ * non-negative decimal with at most 6 places ("1e5", "-1", "abc", "1.2345678"),
+ * so callers treat it as "no amount" instead of BigInt throwing during render.
+ */
 export function parseUsdc(s: string): bigint {
-  const [int, frac = ''] = s.split('.')
-  const padded = frac.padEnd(6, '0').slice(0, 6)
-  return BigInt(int || '0') * 1_000_000n + BigInt(padded)
+  const t = s.trim()
+  if (!/^\d*(\.\d{0,6})?$/.test(t)) return 0n
+  const [int, frac = ''] = t.split('.')
+  return BigInt(int || '0') * 1_000_000n + BigInt(frac.padEnd(6, '0'))
 }
 
 export function explorerTx(hash: string)  { return `${EXPLORER}/tx/${hash}` }

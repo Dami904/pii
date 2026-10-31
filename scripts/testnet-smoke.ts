@@ -374,6 +374,7 @@ async function main(): Promise<void> {
 
     const wPrep = prepareWithdraw({
       sk:          SK_B,
+      encPub:      viewB.encPub,
       note:        bNote!,
       tree:        srB,
       amount:      bNote!.amount - WITHDRAW_FEE,

@@ -71,11 +71,28 @@ export function deriveViewingKeys(sk: bigint): ViewingKeys {
 // ── Pii address ───────────────────────────────────────────────────────────────
 
 /**
- * Encodes a Pii address from ownerKey (32B) and encPub (33B).
- * Format: "pii:" + hex(ownerKey ‖ encPub ‖ checksum)
- * Checksum = first 4 bytes of keccak256(ownerKey ‖ encPub).
+ * The network a Pii address was made for. Addresses written before this existed carry none
+ * ("legacy"): they still decode and still work, but cannot be checked against a network.
  */
-export function encodePiiAddress(ownerKey: bigint, encPub: Uint8Array): string {
+export type PiiNetwork = "mainnet" | "testnet";
+
+const NETWORK_PREFIX: Record<PiiNetwork, string> = { mainnet: "piim:", testnet: "piit:" };
+// One byte per network ('M', 'T'), mixed into the checksum so the visible prefix cannot be
+// swapped without breaking the address.
+const NETWORK_BYTE: Record<PiiNetwork, string> = { mainnet: "4d", testnet: "54" };
+
+function addressChecksum(payloadHex: string, network?: PiiNetwork): string {
+  const input = ("0x" + (network ? NETWORK_BYTE[network] : "") + payloadHex) as `0x${string}`;
+  return keccak256(input).slice(2, 10); // first 4 bytes = 8 hex chars
+}
+
+/**
+ * Encodes a Pii address from ownerKey (32B) and encPub (33B).
+ * Legacy format (no network):  "pii:"  + hex(ownerKey || encPub || checksum)
+ * With a network:              "piim:" (mainnet) or "piit:" (testnet), same body.
+ * Checksum = first 4 bytes of keccak256([networkByte] || ownerKey || encPub).
+ */
+export function encodePiiAddress(ownerKey: bigint, encPub: Uint8Array, network?: PiiNetwork): string {
   const payload = new Uint8Array(32 + 33);
   // ownerKey big-endian 32 bytes
   for (let i = 31; i >= 0; i--) {
@@ -84,30 +101,34 @@ export function encodePiiAddress(ownerKey: bigint, encPub: Uint8Array): string {
   }
   payload.set(encPub, 32);
 
-  const payloadHex = ("0x" + buf2hex(payload)) as `0x${string}`;
-  const checksumHex = keccak256(payloadHex);
-  const checksum = checksumHex.slice(2, 10); // first 4B = 8 hex chars
-  return "pii:" + buf2hex(payload) + checksum;
+  const payloadHex = buf2hex(payload);
+  const prefix = network ? NETWORK_PREFIX[network] : "pii:";
+  return prefix + payloadHex + addressChecksum(payloadHex, network);
 }
 
 /**
- * Decodes a Pii address, validates the checksum, and returns {ownerKey, encPub}.
+ * Decodes a Pii address (legacy or with a network), validates the checksum, and returns
+ * {ownerKey, encPub, network}. `network` is undefined for a legacy address.
  * Throws on any format error or checksum mismatch.
  */
 export function decodePiiAddress(addr: string): {
   ownerKey: bigint;
   encPub: Uint8Array;
+  network?: PiiNetwork;
 } {
-  if (!addr.startsWith("pii:")) throw new Error("not a Pii address");
-  const hex = addr.slice(4);
+  let network: PiiNetwork | undefined;
+  let hex: string;
+  if (addr.startsWith("pii:")) hex = addr.slice(4);
+  else if (addr.startsWith("piim:")) { network = "mainnet"; hex = addr.slice(5); }
+  else if (addr.startsWith("piit:")) { network = "testnet"; hex = addr.slice(5); }
+  else throw new Error("not a Pii address");
   // 32B ownerKey + 33B encPub + 4B checksum = 69B = 138 hex chars
   if (hex.length !== 138) throw new Error("Pii address wrong length");
 
   const payloadHex = hex.slice(0, 130); // 65B payload = 130 hex chars
   const gotChecksum = hex.slice(130);   // 4B = 8 hex chars
 
-  const payloadBytes = ("0x" + payloadHex) as `0x${string}`;
-  const expected = keccak256(payloadBytes).slice(2, 10);
+  const expected = addressChecksum(payloadHex, network);
   if (gotChecksum.toLowerCase() !== expected.toLowerCase())
     throw new Error("Pii address checksum mismatch");
 
@@ -115,7 +136,7 @@ export function decodePiiAddress(addr: string): {
   let ownerKey = 0n;
   for (let i = 0; i < 32; i++) ownerKey = (ownerKey << 8n) | BigInt(buf[i]);
   const encPub = buf.slice(32, 65);
-  return { ownerKey, encPub };
+  return network ? { ownerKey, encPub, network } : { ownerKey, encPub };
 }
 
 // ── Memo plaintext ────────────────────────────────────────────────────────────

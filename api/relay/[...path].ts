@@ -45,7 +45,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   init.headers = headers;
 
   const webReq = new Request(url.toString(), init);
-  const webRes = await handleRequest(webReq, url);
+  let webRes: Response;
+  try {
+    webRes = await handleRequest(webReq, url);
+  } catch (e) {
+    // Missing fields / unparseable numbers throw TypeError / SyntaxError / RangeError.
+    // Never echo details back to the client.
+    const bad = e instanceof TypeError || e instanceof SyntaxError || e instanceof RangeError;
+    res.status(bad ? 400 : 500).json({ error: bad ? "malformed request" : "relayer error" });
+    return;
+  }
 
   res.status(webRes.status);
   webRes.headers.forEach((v, k) => res.setHeader(k, v));

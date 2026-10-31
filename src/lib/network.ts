@@ -26,6 +26,10 @@ export const NETWORK: NetworkId =
 
 export const IS_MAINNET = NETWORK === 'mainnet'
 
+/** The two deployments of this app, so each can link to the other. */
+export const MAINNET_SITE = 'https://pii-pay.vercel.app'
+export const TESTNET_SITE = 'https://pii-testnet.vercel.app'
+
 /** Active viem chain */
 export const ACTIVE_CHAIN: Chain = IS_MAINNET ? arcMainnet : arcTestnet
 

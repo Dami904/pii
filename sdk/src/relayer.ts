@@ -16,6 +16,13 @@ export interface RelayerInfo {
   minFee: string;
   chainId: number;
   pool: `0x${string}`;
+  /** The relayer's gas wallet (absent on older relayers). All amounts are wei (18 decimals). */
+  gas?: {
+    balanceWei: string;
+    gasPriceWei: string;
+    reserveWei: string;
+    typicalGas: { transfer: string; transferNoFee: string; withdraw: string };
+  };
 }
 
 export interface RelayResult {

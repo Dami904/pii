@@ -10,6 +10,8 @@ import { account, POOL_ADDRESS, MIN_FEE, chain, publicClient, walletClient } fro
 import { validateWithdraw, validateTransfer, RELAYER_OWNER_KEY, type WithdrawRequest, type TransferRequest } from "./validate.js";
 import { pool, POOL_ABI } from "./pool.js";
 import { checkRateLimit } from "./rateLimit.js";
+import { checkCanRelay, relayerGas, RESERVE_WEI } from "./gas.js";
+import { TYPICAL_GAS } from "./gas-policy.js";
 import { submitAndTrack } from "../../sdk/src/tx.js";
 
 const WITHDRAW_GAS = 5_000_000n;
@@ -50,12 +52,28 @@ export async function handleRequest(req: Request, urlOverride?: URL): Promise<Re
 
   // GET /info
   if (method === "GET" && path === "/info") {
+    const g = await relayerGas();
     return jsonResp({
       relayerAddress: account.address,
       relayerOwnerKey: "0x" + RELAYER_OWNER_KEY.toString(16).padStart(64, "0"),
       minFee: MIN_FEE.toString(),
       chainId: chain.id,
       pool: POOL_ADDRESS,
+      // The relayer's gas wallet, so the app can warn before a payment or payroll would fail.
+      ...(g
+        ? {
+            gas: {
+              balanceWei: g.balanceWei.toString(),
+              gasPriceWei: g.gasPriceWei.toString(),
+              reserveWei: RESERVE_WEI.toString(),
+              typicalGas: {
+                transfer: TYPICAL_GAS.transfer.toString(),
+                transferNoFee: TYPICAL_GAS.transferNoFee.toString(),
+                withdraw: TYPICAL_GAS.withdraw.toString(),
+              },
+            },
+          }
+        : {}),
     });
   }
 
@@ -68,6 +86,9 @@ export async function handleRequest(req: Request, urlOverride?: URL): Promise<Re
 
   // POST /relay/withdraw
   if (method === "POST" && path === "/relay/withdraw") {
+    const can = await checkCanRelay("withdraw");
+    if (!can.ok) return jsonResp({ error: can.message, code: "low_gas" }, 503);
+
     let body: WithdrawRequest;
     try {
       body = await req.json() as WithdrawRequest;
@@ -124,6 +145,10 @@ export async function handleRequest(req: Request, urlOverride?: URL): Promise<Re
 
   // POST /relay/transfer
   if (method === "POST" && path === "/relay/transfer") {
+    // Payments stop first when gas runs low, so the reserve stays available for withdrawals.
+    const can = await checkCanRelay("transfer");
+    if (!can.ok) return jsonResp({ error: can.message, code: "low_gas" }, 503);
+
     let body: TransferRequest;
     try {
       body = await req.json() as TransferRequest;
