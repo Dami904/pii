@@ -13,7 +13,7 @@
 
 Pii is a zero-knowledge shielded pool for USDC. You deposit USDC and get private "notes". You can then pay anyone privately, or run a whole payroll from a CSV, and the chain only sees "a valid proof was checked, these notes are spent, these new notes exist". Recipients withdraw to any address whenever they want. A relayer submits the transactions, so the payer's wallet never appears on-chain.
 
-[Demo video](#demo-video) · [Try it](#try-it-in-two-minutes) · [On-chain evidence](#on-chain-evidence) · [What it costs](#what-it-costs) · [Privacy](#privacy-what-is-hidden-and-what-is-not) · [Limitations](#limitations) · [Built with Arc Studio](#built-with-arc-studio)
+[Demo video](#demo-video) · [Try it](#try-it-in-two-minutes) · [On-chain evidence](#on-chain-evidence) · [What it costs](#what-it-costs) · [Privacy](#privacy-what-is-hidden-and-what-is-not) · [Built with Arc Studio](#built-with-arc-studio)
 
 ---
 
@@ -246,22 +246,6 @@ Checks run on this repository:
 | Payments through the live relayer, on testnet | One note and no fee note; two in a row from one wallet; a two-note payment; a payment to the sender's own address; a payment spending a note exactly. Balances matched to the last unit, with no value lost to fees. |
 | Fresh clone: install, typecheck, tests, production build | Pass |
 | Secret scan of the full history | No keys committed (only Anvil's public test keys in `scripts/anvil-e2e.ts`) |
-
-## Limitations
-
-- **Not audited.** That's why mainnet has tight caps: 5 USDC per deposit and 50 USDC in the pool. The owner can raise them with one transaction; nobody can touch funds or withdrawals.
-- **The relayer is subsidised.** In v1 payments carry no fee, and the relayer pays about 0.10 USDC of gas for each one from its own wallet. If its balance runs out, relayed payments and withdrawals through the app stop until it's topped up. It reports its balance, refuses a payment it cannot afford, and keeps a reserve (`RESERVE_USDC`, default 0.25 USDC) so that withdrawals outlast payments. A shared rate limiter is planned; today the limit is in memory per serverless instance. Funds are never at risk: the relayer holds only gas money, and the contract accepts a withdrawal proof from any sender.
-- **Payroll is slow and costs gas.** Each row is its own payment (about a minute of proving in the browser and about 0.10 USDC of relayer gas). A batched payroll proof is on the roadmap.
-- **Payments spend at most two notes.** A larger amount is sent as up to 5 payments to the same recipient, one after another. A withdrawal spends one note per transaction, and a larger amount becomes up to 5 withdrawals.
-- **Small anonymity set.** Privacy grows with users. Early on, amounts and timing can link deposits to withdraws.
-- **Deposits are public.** Withdrawing to the wallet you deposited from, or with a matching amount, links the two.
-- **Old-format addresses carry no network.** Addresses written before the network marker (`pii:…`) still work, but the app can only warn about them, not check them. Copy addresses from the site for the network you are paying on.
-- **Activity is local.** What you send is recorded in your browser only, because who you paid is encrypted on-chain. Payments you receive are rebuilt from the chain on Refresh.
-- **Eligibility is a v1 stub.** The transfer circuit already contains an eligibility-list check, but v1 fixes it to the empty set. It goes live with v2 (private shares).
-- **Pinned toolchain.** Built with Noir `1.0.0-rc.5` and Barretenberg `5.2.1`. Newer releases exist (Noir 1.0.0, Barretenberg 5.3.0). The proof, verification-key and verifier formats are tied to the exact versions, so migrating means regenerating the verifiers and redeploying.
-- **Earlier fee-note mode.** If a relayer is configured with a fee above 0, payments use a separate 0.02 USDC fee note. The relayer's fee output in that mode cannot currently be collected; making it collectable is on the roadmap.
-- **Hot operating keys.** The deploy key only pays gas, and the pool owner is a separate wallet. The relayer key lives in Vercel's encrypted environment and the relayer wallet holds only a small gas balance.
-- `scripts/compass-deploy*.ts` is Arc Studio's platform deploy helper and needs packages that exist only in the Arc Studio sandbox, so it's excluded from typecheck.
 
 ## Roadmap
 
